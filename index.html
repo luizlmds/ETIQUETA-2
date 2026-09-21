@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Etiquetas QR - Equipamentos e Locais</title>
+<link rel="icon" id="app-favicon" type="image/png" href="">
 <script>
 //---------------------------------------------------------------------
 //
@@ -3415,6 +3416,11 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
   if (LOGO_DATA_URI && appLogo) {
     appLogo.src = LOGO_DATA_URI;
     appLogo.style.display = 'block';
+  }
+
+  var appFavicon = document.getElementById('app-favicon');
+  if (LOGO_DATA_URI && appFavicon) {
+    appFavicon.href = LOGO_DATA_URI;
   }
 
   // ---------- Configuração da URL da página (GitHub Pages) ----------
