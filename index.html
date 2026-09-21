@@ -2832,11 +2832,13 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
         <h2>Itens cadastrados</h2>
         <span class="count-pill" id="count-pill">0 itens</span>
       </div>
+      <p class="sub" style="margin-top:-8px; margin-bottom:16px;">🌐 Lista compartilhada - qualquer pessoa que abrir este link vê e cadastra os mesmos itens.</p>
 
       <div class="toolbar">
         <button class="btn-ghost" id="btn-select-all">Selecionar todos</button>
         <button class="btn-ghost" id="btn-select-none">Limpar seleção</button>
         <button class="btn-primary" id="btn-print-selected" style="flex:none;">Imprimir selecionados</button>
+        <button class="btn-ghost" id="btn-refresh" style="flex:none;">🔄 Atualizar</button>
         <button class="btn-ghost" id="btn-dashboard" style="flex:none;">📊 Dashboard</button>
         <button class="btn-danger" id="btn-reset-counter" style="flex:none;">Zerar numeração</button>
       </div>
@@ -2854,37 +2856,93 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
 
 <script>
 (function () {
-  var STORAGE_KEY = 'qr-etiquetas:itens';
-  var COUNTER_KEY = 'qr-etiquetas:contador';
+  // ---------- Conexão com o Supabase (banco compartilhado) ----------
+  var SUPABASE_URL = 'https://qyxzjslmksxpozhucwmb.supabase.co';
+  var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5eHpqc2xta3N4cG96aHVjd21iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwMTI1OTcsImV4cCI6MjEwNTU4ODU5N30.zY4ygqYuWCogc64eJKN5CDDQyUIQeD74pzpttVqWLJE';
+
+  var sbHeaders = {
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    'Content-Type': 'application/json'
+  };
+
   var items = [];
 
   function uid() {
     return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
-  function nextSeq() {
-    var n = 1;
-    try {
-      var raw = localStorage.getItem(COUNTER_KEY);
-      n = raw ? (parseInt(raw, 10) + 1) : 1;
-      localStorage.setItem(COUNTER_KEY, String(n));
-    } catch (e) { /* segue apenas em memória */ }
+  // Converte a linha do banco (snake_case) pro formato usado no app (camelCase)
+  function fromDbRow(row) {
+    return {
+      id: row.id,
+      seq: row.seq,
+      nome: row.nome,
+      local: row.local,
+      codigo: row.codigo || '',
+      resp: row.resp || '',
+      obs: row.obs || '',
+      unidade: row.unidade || null,
+      totalUnidades: row.total_unidades || null,
+      criado: row.criado
+    };
+  }
+
+  function toDbRow(item) {
+    return {
+      id: item.id,
+      seq: item.seq,
+      nome: item.nome,
+      local: item.local,
+      codigo: item.codigo || null,
+      resp: item.resp || null,
+      obs: item.obs || null,
+      unidade: item.unidade || null,
+      total_unidades: item.totalUnidades || null,
+      criado: item.criado
+    };
+  }
+
+  // Pede ao banco o próximo número sequencial (atômico - nunca repete,
+  // mesmo com duas pessoas cadastrando ao mesmo tempo)
+  async function nextSeq() {
+    var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/increment_seq', {
+      method: 'POST',
+      headers: sbHeaders,
+      body: '{}'
+    });
+    if (!res.ok) throw new Error('Falha ao gerar numeração (increment_seq): ' + res.status);
+    var n = await res.json();
     return String(n).padStart(6, '0');
   }
 
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      items = raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      items = [];
-    }
+  // Busca todos os itens cadastrados por qualquer pessoa
+  async function load() {
+    var res = await fetch(SUPABASE_URL + '/rest/v1/items?select=*&order=seq.desc', {
+      headers: sbHeaders
+    });
+    if (!res.ok) throw new Error('Falha ao carregar itens: ' + res.status);
+    var rows = await res.json();
+    items = rows.map(fromDbRow);
   }
 
-  function save() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch (e) { /* armazenamento indisponível - segue apenas em memória */ }
+  // Salva um item novo no banco (visível pra todo mundo que abrir o app)
+  async function insertItem(item) {
+    var res = await fetch(SUPABASE_URL + '/rest/v1/items', {
+      method: 'POST',
+      headers: sbHeaders,
+      body: JSON.stringify(toDbRow(item))
+    });
+    if (!res.ok) throw new Error('Falha ao salvar item: ' + res.status);
+  }
+
+  // Remove um item do banco
+  async function deleteItemRemote(id) {
+    var res = await fetch(SUPABASE_URL + '/rest/v1/items?id=eq.' + encodeURIComponent(id), {
+      method: 'DELETE',
+      headers: sbHeaders
+    });
+    if (!res.ok) throw new Error('Falha ao excluir item: ' + res.status);
   }
 
   // Formato vCard (cartão de contato): é um padrão que os aplicativos de
@@ -2974,7 +3032,9 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
   var fQtd = document.getElementById('f-qtd');
   var fObs = document.getElementById('f-obs');
 
-  form.addEventListener('submit', function (e) {
+  var submitBtn = form.querySelector('button[type="submit"]');
+
+  form.addEventListener('submit', async function (e) {
     e.preventDefault();
 
     var nome = fNome.value.trim();
@@ -2984,33 +3044,44 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
     var qtdRaw = parseInt(fQtd.value, 10);
     var count = (qtdRaw && qtdRaw >= 1) ? qtdRaw : 1;
 
-    var novos = [];
-    for (var i = 1; i <= count; i++) {
-      var item = {
-        id: uid(),
-        seq: nextSeq(),
-        nome: nome,
-        local: local,
-        codigo: fCodigo.value.trim(),
-        resp: fResp.value.trim(),
-        obs: fObs.value.trim(),
-        unidade: count > 1 ? i : null,
-        totalUnidades: count > 1 ? count : null,
-        criado: new Date().toISOString()
-      };
-      novos.push(item);
-      items.unshift(item);
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Salvando...';
+
+    try {
+      var novos = [];
+      for (var i = 1; i <= count; i++) {
+        var seq = await nextSeq();
+        var item = {
+          id: uid(),
+          seq: seq,
+          nome: nome,
+          local: local,
+          codigo: fCodigo.value.trim(),
+          resp: fResp.value.trim(),
+          obs: fObs.value.trim(),
+          unidade: count > 1 ? i : null,
+          totalUnidades: count > 1 ? count : null,
+          criado: new Date().toISOString()
+        };
+        await insertItem(item);
+        novos.push(item);
+        items.unshift(item);
+      }
+
+      renderList();
+
+      previewBox.classList.add('show');
+      // mostra a prévia do primeiro item gerado (todos seguem o mesmo padrão)
+      renderQrInto(previewQr, buildQrText(novos[0]), 140);
+
+      form.reset();
+      fNome.focus();
+    } catch (err) {
+      alert('Não consegui salvar no banco de dados. Confira sua internet e tente de novo.\n\n' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Gerar QR Code';
     }
-
-    save();
-    renderList();
-
-    previewBox.classList.add('show');
-    // mostra a prévia do primeiro item gerado (todos seguem o mesmo padrão)
-    renderQrInto(previewQr, buildQrText(novos[0]), 140);
-
-    form.reset();
-    fNome.focus();
   });
 
   // ---------- Lista ----------
@@ -3088,11 +3159,19 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
       var btnDel = document.createElement('button');
       btnDel.className = 'btn-danger';
       btnDel.textContent = 'Excluir';
-      btnDel.addEventListener('click', function () {
-        items = items.filter(function (i) { return i.id !== item.id; });
-        delete selected[item.id];
-        save();
-        renderList();
+      btnDel.addEventListener('click', async function () {
+        btnDel.disabled = true;
+        btnDel.textContent = 'Excluindo...';
+        try {
+          await deleteItemRemote(item.id);
+          items = items.filter(function (i) { return i.id !== item.id; });
+          delete selected[item.id];
+          renderList();
+        } catch (err) {
+          alert('Não consegui excluir no banco de dados.\n\n' + err.message);
+          btnDel.disabled = false;
+          btnDel.textContent = 'Excluir';
+        }
       });
 
       foot.appendChild(btnView);
@@ -3125,11 +3204,35 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
     if (chosen.length === 0) { alert('Selecione ao menos um item para imprimir.'); return; }
     printItems(chosen);
   });
-  document.getElementById('btn-reset-counter').addEventListener('click', function () {
-    var ok = confirm('Isso volta a numeração pra 000001. Itens já cadastrados mantêm o número antigo - só os próximos itens vão usar a nova contagem. Continuar?');
+  document.getElementById('btn-reset-counter').addEventListener('click', async function () {
+    var ok = confirm('Isso volta a numeração pra 000001 pra TODO MUNDO que usa o app. Itens já cadastrados mantêm o número antigo - só os próximos itens vão usar a nova contagem. Continuar?');
     if (!ok) return;
-    try { localStorage.removeItem(COUNTER_KEY); } catch (e) {}
-    alert('Numeração zerada. O próximo item cadastrado será 000001.');
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/counters?name=eq.seq', {
+        method: 'PATCH',
+        headers: sbHeaders,
+        body: JSON.stringify({ value: 0 })
+      });
+      if (!res.ok) throw new Error('status ' + res.status);
+      alert('Numeração zerada. O próximo item cadastrado será 000001.');
+    } catch (err) {
+      alert('Não consegui zerar a numeração no banco.\n\n' + err.message);
+    }
+  });
+
+  document.getElementById('btn-refresh').addEventListener('click', async function () {
+    var btn = document.getElementById('btn-refresh');
+    btn.disabled = true;
+    btn.textContent = 'Atualizando...';
+    try {
+      await load();
+      renderList();
+    } catch (err) {
+      alert('Não consegui atualizar. Confira sua internet.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔄 Atualizar';
+    }
   });
 
   document.getElementById('btn-dashboard').addEventListener('click', showDashboardModal);
@@ -3479,8 +3582,22 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
 
   refreshSettingsStatus();
 
-  load();
-  renderList();
+  async function initialLoad() {
+    listWrap.innerHTML = '<div class="empty">Carregando itens do banco de dados…</div>';
+    try {
+      await load();
+      renderList();
+    } catch (err) {
+      listWrap.innerHTML = '<div class="empty">Não consegui carregar os itens do banco de dados.<br>Confira sua internet e clique em "🔄 Atualizar".</div>';
+    }
+  }
+
+  // Mantém a lista sincronizada com o que outras pessoas cadastram
+  setInterval(async function () {
+    try { await load(); renderList(); } catch (err) { /* tenta de novo no próximo ciclo */ }
+  }, 20000);
+
+  initialLoad();
 })();
 </script>
 </body>
