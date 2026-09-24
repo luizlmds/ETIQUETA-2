@@ -3529,7 +3529,7 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
   // ---------- Configuração da URL da página (GitHub Pages) ----------
   // Painel de configuração ficou oculto na tela - a URL abaixo é usada
   // sempre por padrão. Pra trocar, edite DEFAULT_BASE_URL aqui no código.
-  var DEFAULT_BASE_URL = 'https://luizlmds.github.io/etiquetas/';
+  var DEFAULT_BASE_URL = 'https://brtct.github.io/etiquetas/';
   var BASEURL_KEY = 'qr-etiquetas:baseurl';
   var settingsUrlInput = document.getElementById('settings-url');
   var settingsStatus = document.getElementById('settings-status');
@@ -3537,13 +3537,9 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
   var settingsClear = document.getElementById('settings-clear');
 
   function getBaseUrl() {
-    try {
-      var stored = localStorage.getItem(BASEURL_KEY);
-      if (stored === null) return DEFAULT_BASE_URL; // nunca configurado -> usa o padrão
-      return stored.trim(); // pode ser '' se o usuário explicitamente pediu offline
-    } catch (e) {
-      return DEFAULT_BASE_URL;
-    }
+    // Sempre usa a URL fixa definida em DEFAULT_BASE_URL, ignorando
+    // qualquer valor antigo que possa ter ficado salvo no navegador.
+    return DEFAULT_BASE_URL;
   }
 
   function setBaseUrl(url) {
